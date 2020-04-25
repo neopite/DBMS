@@ -3,7 +3,8 @@
   (:use [clojure.data.csv])
   (:require [clojure.data.csv :as reader]
             [clojure.string :as str]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.set :as set]))
 
 (defn readFile [name]
   (with-open [reader (io/reader name)]
@@ -15,7 +16,7 @@
   (map #(zipmap headers %) info))
 
 (defn createTable [name]
-  (apply formate-data-to-hashmap (readFile name)))
+  (doall(apply formate-data-to-hashmap (readFile name))))
 
 (defn printData [table]
   (loop [outter 0]                                          ;;Внешний цикл по записям от 0 ... n;
@@ -51,7 +52,7 @@
 
 (defn findAllClausesInWhere [whereQuery]
   (def splited (str/split whereQuery #" "))
-  (filterv (fn [ar] (or (= 0 (compare ar "and")) (= 0 (compare ar "or"))) )splited)
+  (filterv (fn [ar] (or (= 0 (compare ar "and")) (= 0 (compare ar "or")))) splited)
   )
 
 ;@param - where query without where (only conditions)
@@ -62,8 +63,6 @@
   (def splited (str/split whereQuery #"and|or"))
   (map #(str/trim %) splited)
   )
-
-;;defn recursiveMergingMapsWithConditions [total,array]
 
 
 
@@ -87,8 +86,7 @@
                            (> (Integer/parseInt (get (select-keys line [col]) col)) (Integer/parseInt (nth valuess 0)))
                            ))
            file))
-(defn executeBetweens [query file]
-  (def splitedWhereClause (splitWhereClause (findWhereExpression query)))
+(defn executeBetweens [splitedWhereClause file]
   (def valuesForBetween (myBetweenValues (get splitedWhereClause 1)))
   (def colForBetween (get splitedWhereClause 0))
   (betweens valuesForBetween file colForBetween)
@@ -106,17 +104,66 @@
   (filterv (fn [x] (.contains df2 x)) df1))
 
 (defn mergeOrConditiontTwoDf [df1 df2]
-  (concat df1 df2)
+  (set/union df1 df2)
   )
 ;--------------------------------------------------------------------------------------------------
 
 
-() (defn executeNotBetweens [query file]
-  (def splitedWhereClause (splitWhereClause (findWhereExpression query)))
+()
+(defn executeNotBetweens [splitedWhereClause file]
   (def valuesForBetween (myBetweenValues (get splitedWhereClause 1)))
   (def colForBetween (get splitedWhereClause 0))
   (notBetweens valuesForBetween file colForBetween)
   )
+
+
+(defn createArrayOfDfInWhere [query file]
+  (def splitedArrayByLogicalValues (findAllConditionInWhere (findWhereExpression query)))
+  (doall (mapv #(cond
+                 (.contains (str/split % #" ") "not") (executeNotBetweens (str/split (str/trim (str/replace % #"not" "")) #" ") file)
+                 :else
+                 (executeBetweens (str/split % #" ") file)
+
+                 ) splitedArrayByLogicalValues))
+  )
+
+(defn recursiveConcat [finAr arrayOfDf arrayOfCond]
+  (if (empty? arrayOfCond) true)
+  (map #(select-keys % [(getKeys finAr)]) finAr)
+  ((if (empty? finAr) true)
+   (let [kek (nth arrayOfDf 0)]
+     (case kek
+       "and" (recursiveConcat (mergeAndConditionTwoDf (nth 0 arrayOfDf) (nth 1 arrayOfDf)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+       "or" (recursiveConcat (mergeOrConditiontTwoDf (nth 0 arrayOfDf) (nth 1 arrayOfDf)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+       )
+     )
+   (let [choose (first arrayOfCond)]
+     (case choose
+       "and" (recursiveConcat (mergeAndConditionTwoDf (finAr) (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+       "or" (recursiveConcat (mergeOrConditiontTwoDf (finAr) (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+       )
+     )
+
+   ))
+
+(defn recursiveConcat [finAr arrayOfDf arrayOfCond]
+  (cond
+    (= (empty? arrayOfCond) true) (vec finAr)
+    (= (empty? finAr) true) (let [kek (nth arrayOfCond 0)]
+                              (case kek
+                                "and" (recursiveConcat (mergeAndConditionTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+                                "or" (recursiveConcat (mergeOrConditiontTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+                                )
+                              )
+    :else  (let [choose (first arrayOfCond)]
+             (case choose
+               "and" (recursiveConcat (mergeAndConditionTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+               "or" (recursiveConcat (mergeOrConditiontTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+               )
+             )
+    )
+  )
+
 
 ;----------------------------------------------------------Distinct
 (defn myDistinct [table]
@@ -162,11 +209,12 @@
 (defn executeSqlQuery [query]
   (def splitedLine (str/split query #" "))
   (def parsedSql (parseSqlQuery splitedLine))
-  (def tabl (doall (createTable (get parsedSql :tableName))))
+  (def tabl (createTable (get parsedSql :tableName)))
   (def initialTable (if (and (contains? parsedSql :isSelect) (contains? parsedSql :tableName))
-                      (selectColumn (get parsedSql :expressions) tabl)
+                      (selectColumn (getKeys tabl) tabl)
                       (print "error in query")))
-  (def tableWithWhere (if (contains? parsedSql :isWhere) (executeBetweens query initialTable) initialTable))
-  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (print-formated-hashmap-in-table (myDistinct tableWithWhere)) (print-formated-hashmap-in-table tableWithWhere)))
+  (def tableWithWhere (if(contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query)) ) initialTable))
+  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithWhere) tableWithWhere))
+  (def selectByColumns (if (contains? parsedSql :expressions) (print-formated-hashmap-in-table(selectColumn (get parsedSql :expressions) tableWithDistinct)) (print-formated-hashmap-in-table tableWithDistinct)))
   )
 
