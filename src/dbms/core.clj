@@ -6,10 +6,16 @@
             [clojure.java.io :as io]
             [clojure.set :as set]))
 
-(defn readFile [name]
-  (with-open [reader (io/reader name)]
-    (doall
-      (reader/read-csv reader))))
+(defn saveSeq [name format]
+  (cond
+    (= format "tsv") (with-open [reader (io/reader name)]
+                       (doall
+                         (reader/read-csv reader :separator \tab)))
+    (= format "csv") (with-open [reader (io/reader name)]
+                       (doall
+                         (reader/read-csv reader)))))
+
+
 
 (defn formate-data-to-hashmap [heads & info]
   (def headers heads)
@@ -36,8 +42,8 @@
   (into () (map #(checkOneRow %) table))
   )
 
-(defn createTable [name]
-  (formateTable (doall(apply formate-data-to-hashmap (readFile name))))
+(defn createTable [name format]
+  (formateTable (doall(apply formate-data-to-hashmap (saveSeq name format))))
   )
 
 
@@ -52,7 +58,7 @@
       (recur (inc outter))))
   )
 
-(def tab (createTable "map_cal.csv"))
+(def tab (createTable "map_cal.csv" "csv"))
 
 (defn printHeaders [headers]
   (loop [itter 0]
@@ -95,7 +101,7 @@
 
 (defn findWhereExpression [query]
   (def firstInd (+ (.indexOf query "where") +6))
-  (def lastInd (+ (.lastIndexOf query ")") 1))
+  (def lastInd (+ (.lastIndexOf query ")") 1))              ;;rewrite finder !-1!_!_!_!_!_!_!_!!__!_!_!_!!_!_!_!_!_!_!_!_!_!_!
   (subs query firstInd lastInd))
 
 (defn splitWhereClause [whereClause]
@@ -194,6 +200,12 @@
 (defn parseCol [query]
   (str/split (get query 1) #","
              ))
+(defn getOrderByClause [query]
+  (filterv #(or (= (compare "asc" %) 0)(= (compare "desc" %) 0)) query)
+  )
+(defn getOrderByCols [query]
+  (str/split (nth query (+(.indexOf query "order")2)) #",")
+  )
 
 (defn parseSqlQuery [query]
   (cond
@@ -207,36 +219,29 @@
     (some? (some (partial = "nextexps") query)) (conj {:expressions (parseCol query)}
                                                       (parseSqlQuery (subvec query 1)))
     (some? (some (partial = "from") query)) (conj {:tableName (get query (getTableIndex query))}
-                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1))
+                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1  ))
                                                                                   (subvec query (getTableIndex query))))))
     (some? (some (partial = "where") query)) (conj {:isWhere true}
                                                    (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "where"))
                                                                                    (subvec query (+ (.indexOf query "where") 1))))))
+    (some? (some (partial = "order") query)) (conj {:isOrderBy true}
+                                                   (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "order"))
+                                                                                   (subvec query (+ (.indexOf query "by")1))
+                                                                                   ) ))
+                                                   )
+
     :else {}))
 
 
-(defn executeSqlQuery [query]
-  (def splitedLine (str/split query #" "))
-  (def parsedSql (parseSqlQuery splitedLine))
-  (def tabl (createTable (get parsedSql :tableName)))
-  (def initialTable (if (and (contains? parsedSql :isSelect) (contains? parsedSql :tableName))
-                      (selectColumn (getKeys tabl) tabl)
-                      (print "error in query")))
-  (def tableWithWhere (if(contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query)) ) initialTable))
-  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithWhere) tableWithWhere))
-  (if (contains? parsedSql :expressions) (selectColumn (get parsedSql :expressions) tableWithDistinct) (print-formated-hashmap-in-table tableWithDistinct))
-  )
-
-
-(defn mapToKey [table]
-  (into {} (for [[k v] { "stuff" 42 "like" 13 "this" 7 }]
-             [(keyword k) v]))
-  )
-
 (defn to-string-keys
   [table]
-  (zipmap (map (comp clojure.string/upper-case name) (keys table)) (vals
-                                                                 table)))
+  (zipmap (mapv (comp name name) (keys table)) (vals table)))
+
+(defn to-string-map
+  [table]
+  (mapv #(to-string-keys %) table)
+  )
+
 (defn to-keyword-keys
   [table]
   (zipmap (mapv (comp keyword name) (keys table)) (vals table)))
@@ -245,3 +250,36 @@
   [table]
   (mapv #(to-keyword-keys %) table)
   )
+
+
+
+(defn myOrderByAsc [table cols]
+  (sort-by (apply juxt cols) table)
+  )
+
+(defn myOrderByDesc [table cols]
+  (reverse(sort-by (apply juxt cols) table))
+  )
+
+(defn executeOrderByOptional [option table cols]
+  (if (= (compare (nth option 0) "asc") 0) (myOrderByAsc table cols) (myOrderByDesc table cols))
+  )
+
+
+(defn executeSqlQuery [query]
+  (def splitedLine (str/split query #" "))
+  (def parsedSql (parseSqlQuery splitedLine))
+  (def tabl (createTable (get parsedSql :tableName) (nth(str/split (get parsedSql :tableName) #"\.")1)))
+  (def initialTable (if (and (contains? parsedSql :isSelect) (contains? parsedSql :tableName))
+                      (selectColumn (getKeys tabl) tabl)
+                      (print "error in query")))
+  (def tableWithWhere (if(contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query)) ) initialTable))
+  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithWhere) tableWithWhere))
+  (def tableWithOrderBy (if (contains? parsedSql :isOrderBy)
+                          (to-string-map(executeOrderByOptional (getOrderByClause splitedLine)
+                                                                (to-keyword-map tableWithDistinct)
+                                                                (mapv #(keyword %) (getOrderByCols splitedLine))))
+                          tableWithDistinct))
+  (if (contains? parsedSql :expressions) (selectColumn (get parsedSql :expressions) tableWithOrderBy) (print-formated-hashmap-in-table tableWithOrderBy))
+  )
+
