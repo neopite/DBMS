@@ -15,8 +15,31 @@
   (def headers heads)
   (map #(zipmap headers %) info))
 
+;This func check is a str is a number
+;This func is used for creating table(formatting numbers in string to integer type)
+(defn checkIfStringIsNumber [str]
+  (if (empty? str) false(every? #(Character/isDigit %) str))
+  )
+
+(defn checkOneRow [oneRow]
+  (def va (vals oneRow))
+  (def ke (keys oneRow))
+  (zipmap ke (mapv #(cond
+                      (checkIfStringIsNumber %) (Integer/parseInt %)
+                      :else
+                      %
+                      ) va))
+  )
+
+
+(defn formateTable [table]
+  (into () (map #(checkOneRow %) table))
+  )
+
 (defn createTable [name]
-  (doall(apply formate-data-to-hashmap (readFile name))))
+  (formateTable (doall(apply formate-data-to-hashmap (readFile name))))
+  )
+
 
 (defn printData [table]
   (loop [outter 0]                                          ;;Внешний цикл по записям от 0 ... n;
@@ -29,7 +52,7 @@
       (recur (inc outter))))
   )
 
-(def tab (createTable "mp-assistants.csv"))
+(def tab (createTable "map_cal.csv"))
 
 (defn printHeaders [headers]
   (loop [itter 0]
@@ -38,18 +61,22 @@
       (recur (inc itter))))
   (println)
   )
+
+
+
 (defn print-formated-hashmap-in-table [table]
   (printHeaders (first table))
   (printData table)
   )
+
+
 (defn getKeys [file]
   (keys (first file)))
+
 
 ;@param - where query without where(not splitted)
 ;find all 'and' and 'or' in order
 ;@return - array of logical values
-
-
 (defn findAllClausesInWhere [whereQuery]
   (def splited (str/split whereQuery #" "))
   (filterv (fn [ar] (or (= 0 (compare ar "and")) (= 0 (compare ar "or")))) splited)
@@ -82,8 +109,8 @@
 
 ;---------------------------------------------------------------Between(value,value)
 (defn betweens [valuess file col]
-  (filterv (fn [line] (and (< (Integer/parseInt (get (select-keys line [col]) col)) (Integer/parseInt (nth valuess 1)))
-                           (> (Integer/parseInt (get (select-keys line [col]) col)) (Integer/parseInt (nth valuess 0)))
+  (filterv (fn [line] (and (< (get (select-keys line [col]) col) (Integer/parseInt (nth valuess 1)))
+                           (> (get (select-keys line [col]) col) (Integer/parseInt (nth valuess 0)))
                            ))
            file))
 (defn executeBetweens [splitedWhereClause file]
@@ -93,20 +120,20 @@
   )
 ;----------------------------------------------------------------not between(value,value);
 (defn notBetweens [valuess file col]
-  (filterv (fn [line] (or (> (Integer/parseInt (get (select-keys line [col]) col)) (Integer/parseInt (nth valuess 1)))
-                          (< (Integer/parseInt (get (select-keys line [col]) col)) (Integer/parseInt (nth valuess 0)))
+  (filterv (fn [line] (or (> (get (select-keys line [col]) col) (Integer/parseInt (nth valuess 1)))
+                          (< (get (select-keys line [col]) col) (Integer/parseInt (nth valuess 0)))
                           ))
            file))
 
 
-;-----------------------------------------------------------Merging two maps into one with different condtion
+;-----------------------------------------------------------Merging two maps into one with different condition
 (defn mergeAndConditionTwoDf [df1 df2]
   (filterv (fn [x] (.contains df2 x)) df1))
 
 (defn mergeOrConditiontTwoDf [df1 df2]
   (set/union df1 df2)
   )
-;--------------------------------------------------------------------------------------------------
+;------------------------------------------------------------Not between execution
 
 
 ()
@@ -126,25 +153,7 @@
 
                  ) splitedArrayByLogicalValues))
   )
-
-(defn recursiveConcat [finAr arrayOfDf arrayOfCond]
-  (if (empty? arrayOfCond) true)
-  (map #(select-keys % [(getKeys finAr)]) finAr)
-  ((if (empty? finAr) true)
-   (let [kek (nth arrayOfDf 0)]
-     (case kek
-       "and" (recursiveConcat (mergeAndConditionTwoDf (nth 0 arrayOfDf) (nth 1 arrayOfDf)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
-       "or" (recursiveConcat (mergeOrConditiontTwoDf (nth 0 arrayOfDf) (nth 1 arrayOfDf)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
-       )
-     )
-   (let [choose (first arrayOfCond)]
-     (case choose
-       "and" (recursiveConcat (mergeAndConditionTwoDf (finAr) (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
-       "or" (recursiveConcat (mergeOrConditiontTwoDf (finAr) (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
-       )
-     )
-
-   ))
+;--------------------------------------------------------------------Calculate final Df for where clauses
 
 (defn recursiveConcat [finAr arrayOfDf arrayOfCond]
   (cond
@@ -215,6 +224,24 @@
                       (print "error in query")))
   (def tableWithWhere (if(contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query)) ) initialTable))
   (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithWhere) tableWithWhere))
-  (def selectByColumns (if (contains? parsedSql :expressions) (print-formated-hashmap-in-table(selectColumn (get parsedSql :expressions) tableWithDistinct)) (print-formated-hashmap-in-table tableWithDistinct)))
+  (if (contains? parsedSql :expressions) (selectColumn (get parsedSql :expressions) tableWithDistinct) (print-formated-hashmap-in-table tableWithDistinct))
   )
 
+
+(defn mapToKey [table]
+  (into {} (for [[k v] { "stuff" 42 "like" 13 "this" 7 }]
+             [(keyword k) v]))
+  )
+
+(defn to-string-keys
+  [table]
+  (zipmap (map (comp clojure.string/upper-case name) (keys table)) (vals
+                                                                 table)))
+(defn to-keyword-keys
+  [table]
+  (zipmap (mapv (comp keyword name) (keys table)) (vals table)))
+
+(defn to-keyword-map
+  [table]
+  (mapv #(to-keyword-keys %) table)
+  )
