@@ -285,6 +285,7 @@
   (def oneCol (to-string-map(executeOrderByOptional ["asc"] (to-keyword-map(selectColumn [col] table)) (mapv #(keyword %) [col]))))
   (if (= (rem (count oneCol) 2) 1) (nth (vals(nth oneCol (int (Math/floor (/ (count oneCol) 2))))) 0)
                                    (first (double (/ (+ (first (vals (nth oneCol (/ (count oneCol) 2)))) (first (vals (nth oneCol (- (/ (count oneCol) 2) 1))))) 2)))  )
+  
   )
 
 
