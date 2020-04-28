@@ -32,6 +32,7 @@
   (def ke (keys oneRow))
   (zipmap ke (mapv #(cond
                       (checkIfStringIsNumber %) (Integer/parseInt %)
+                      (empty? %) 0
                       :else
                       %
                       ) va))
@@ -274,23 +275,41 @@
 
 
 (defn myCount[table col]
-  (if (= (compare (nth col 0) "*") 0)
-    (count (filterv #(not= (nth (vals (select-keys % [(getKeys table)])) 0) "") table))
-    (count (filterv #(not= (nth (vals (select-keys % col)) 0) "") table))
+  (if (= (compare col "*") 0)
+    (count (filterv #(not= (nth (vals (select-keys % [(getKeys table)])) 0) "0") table))
+    (count (filterv #(not= (nth (vals (select-keys % [col])) 0) "") table))
     )
   )
 
 (defn myMedian [table col]
-  (def oneCol (to-string-map(executeOrderByOptional ["asc"] (to-keyword-map(selectColumn col table)) (mapv #(keyword %) col))))
-  (if (= (rem (count oneCol) 2) 1) (vals(nth oneCol (int (Math/floor (/ (count oneCol) 2)))))
-                                   (double (/ (+ (first (vals (nth oneCol (/ (count oneCol) 2)))) (first (vals (nth oneCol (- (/ (count oneCol) 2) 1))))) 2))  )
+  (def oneCol (to-string-map(executeOrderByOptional ["asc"] (to-keyword-map(selectColumn [col] table)) (mapv #(keyword %) [col]))))
+  (if (= (rem (count oneCol) 2) 1) (nth (vals(nth oneCol (int (Math/floor (/ (count oneCol) 2))))) 0)
+                                   (first (double (/ (+ (first (vals (nth oneCol (/ (count oneCol) 2)))) (first (vals (nth oneCol (- (/ (count oneCol) 2) 1))))) 2)))  )
   )
 
 
 (defn mySum [table col]
-  (vals(apply merge-with + (selectColumn col table)))
+  (nth (vals(apply merge-with + (selectColumn [col] table))) 0)
   )
 
+;------------------------------------------------------------Execution agregate fucntion
+(defn recursiveAgregateExecusion [table funcs args total]
+  (if (= (count funcs) 0) total
+                          (let [choose (nth funcs 0)]
+                            (case choose
+                              "count" (recursiveAgregateExecusion table (subvec funcs 1) (subvec args 1) (conj total (myCount table (nth args 0))))
+                              "sum" (recursiveAgregateExecusion table (subvec funcs 1) (subvec args 1) (conj total (mySum table (nth args 0))))
+                              "med" (recursiveAgregateExecusion table (subvec funcs 1) (subvec args 1) (conj total (myMedian table (nth args 0))))
+                              )
+                            )
+                          )
+  )
+
+
+
+
+
+;---------------------------------------------------------Agregate Functions Parsing
 
 
 
