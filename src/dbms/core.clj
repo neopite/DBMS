@@ -24,7 +24,7 @@
 ;This func check is a str is a number
 ;This func is used for creating table(formatting numbers in string to integer type)
 (defn checkIfStringIsNumber [str]
-  (if (empty? str) false(every? #(Character/isDigit %) str))
+  (if (empty? str) false (every? #(Character/isDigit %) str))
   )
 
 (defn checkOneRow [oneRow]
@@ -42,8 +42,9 @@
   (into () (map #(checkOneRow %) table))
   )
 
+
 (defn createTable [name format]
-  (formateTable (doall(apply formate-data-to-hashmap (saveSeq name format))))
+  (formateTable (doall (apply formate-data-to-hashmap (saveSeq name format))))
   )
 
 
@@ -78,6 +79,11 @@
 
 (defn getKeys [file]
   (keys (first file)))
+
+
+;----------------------------------------------------------Distinct
+(defn myDistinct [table]
+  (into [] (distinct table)))
 
 
 ;@param - where query without where(not splitted)
@@ -137,7 +143,7 @@
   (filterv (fn [x] (.contains df2 x)) df1))
 
 (defn mergeOrConditiontTwoDf [df1 df2]
-  (set/union df1 df2)
+  (myDistinct (set/union df1 df2))
   )
 ;------------------------------------------------------------Not between execution
 
@@ -153,36 +159,33 @@
 (defn createArrayOfDfInWhere [query file]
   (def splitedArrayByLogicalValues (findAllConditionInWhere (findWhereExpression query)))
   (doall (mapv #(cond
-                 (.contains (str/split % #" ") "not") (executeNotBetweens (str/split (str/trim (str/replace % #"not" "")) #" ") file)
-                 :else
-                 (executeBetweens (str/split % #" ") file)
+                  (.contains (str/split % #" ") "not") (executeNotBetweens (str/split (str/trim (str/replace % #"not" "")) #" ") file)
+                  :else
+                  (executeBetweens (str/split % #" ") file)
 
-                 ) splitedArrayByLogicalValues))
+                  ) splitedArrayByLogicalValues))
   )
 ;--------------------------------------------------------------------Calculate final Df for where clauses
 
 (defn recursiveConcat [finAr arrayOfDf arrayOfCond]
-  (cond
-    (= (empty? arrayOfCond) true) (vec finAr)
-    (= (empty? finAr) true) (let [kek (nth arrayOfCond 0)]
-                              (case kek
-                                "and" (recursiveConcat (mergeAndConditionTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
-                                "or" (recursiveConcat (mergeOrConditiontTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
-                                )
-                              )
-    :else  (let [choose (first arrayOfCond)]
-             (case choose
-               "and" (recursiveConcat (mergeAndConditionTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
-               "or" (recursiveConcat (mergeOrConditiontTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
-               )
-             )
-    )
+  (if (and (= (count finAr) 0) (= (count arrayOfDf) 1) (empty? arrayOfCond)) (nth arrayOfDf 0) (cond
+                                                                                                 (= (empty? arrayOfCond) true) (vec finAr)
+                                                                                                 (= (empty? finAr) true) (let [kek (nth arrayOfCond 0)]
+                                                                                                                           (case kek
+                                                                                                                             "and" (recursiveConcat (mergeAndConditionTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+                                                                                                                             "or" (recursiveConcat (mergeOrConditiontTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+                                                                                                                             )
+                                                                                                                           )
+                                                                                                 :else (let [choose (first arrayOfCond)]
+                                                                                                         (case choose
+                                                                                                           "and" (recursiveConcat (mergeAndConditionTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+                                                                                                           "or" (recursiveConcat (mergeOrConditiontTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+                                                                                                           )
+                                                                                                         )
+                                                                                                 ))
   )
 
 
-;----------------------------------------------------------Distinct
-(defn myDistinct [table]
-  (into [] (distinct table)))
 
 ;------------------------------------------------------------Select Columns
 (defn selectColumn [col file]
@@ -201,10 +204,10 @@
   (str/split (get query 1) #","
              ))
 (defn getOrderByClause [query]
-  (filterv #(or (= (compare "asc" %) 0)(= (compare "desc" %) 0)) query)
+  (filterv #(or (= (compare "asc" %) 0) (= (compare "desc" %) 0)) query)
   )
 (defn getOrderByCols [query]
-  (str/split (nth query (+(.indexOf query "order")2)) #",")
+  (str/split (nth query (+ (.indexOf query "order") 2)) #",")
   )
 
 (defn parseSqlQuery [query]
@@ -219,15 +222,15 @@
     (some? (some (partial = "nextexps") query)) (conj {:expressions (parseCol query)}
                                                       (parseSqlQuery (subvec query 1)))
     (some? (some (partial = "from") query)) (conj {:tableName (get query (getTableIndex query))}
-                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1  ))
+                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1))
                                                                                   (subvec query (getTableIndex query))))))
     (some? (some (partial = "where") query)) (conj {:isWhere true}
                                                    (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "where"))
                                                                                    (subvec query (+ (.indexOf query "where") 1))))))
     (some? (some (partial = "order") query)) (conj {:isOrderBy true}
                                                    (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "order"))
-                                                                                   (subvec query (+ (.indexOf query "by")1))
-                                                                                   ) ))
+                                                                                   (subvec query (+ (.indexOf query "by") 1))
+                                                                                   )))
                                                    )
 
     :else {}))
@@ -258,7 +261,7 @@
   )
 
 (defn myOrderByDesc [table cols]
-  (reverse(sort-by (apply juxt cols) table))
+  (reverse (sort-by (apply juxt cols) table))
   )
 
 (defn executeOrderByOptional [option table cols]
@@ -266,20 +269,50 @@
   )
 
 
-(defn executeSqlQuery [query]
+;-----------------------------------------------------------Agregate fucntions
+
+
+
+(defn myCount[table col]
+  (if (= (compare (nth col 0) "*") 0)
+    (count (filterv #(not= (nth (vals (select-keys % [(getKeys table)])) 0) "") table))
+    (count (filterv #(not= (nth (vals (select-keys % col)) 0) "") table))
+    )
+  )
+
+(defn myMedian [table col]
+  (def oneCol (to-string-map(executeOrderByOptional ["asc"] (to-keyword-map(selectColumn col table)) (mapv #(keyword %) col))))
+  (if (= (rem (count oneCol) 2) 1) (vals(nth oneCol (int (Math/floor (/ (count oneCol) 2)))))
+                                   (double (/ (+ (first (vals (nth oneCol (/ (count oneCol) 2)))) (first (vals (nth oneCol (- (/ (count oneCol) 2) 1))))) 2))  )
+  )
+
+
+(defn mySum [table col]
+  (vals(apply merge-with + (selectColumn col table)))
+  )
+
+
+
+
+
+
+(defn executeSqlQuery []
+  (def query (read-line))
   (def splitedLine (str/split query #" "))
   (def parsedSql (parseSqlQuery splitedLine))
-  (def tabl (createTable (get parsedSql :tableName) (nth(str/split (get parsedSql :tableName) #"\.")1)))
+  (def tabl (createTable (get parsedSql :tableName) (nth (str/split (get parsedSql :tableName) #"\.") 1)))
   (def initialTable (if (and (contains? parsedSql :isSelect) (contains? parsedSql :tableName))
                       (selectColumn (getKeys tabl) tabl)
                       (print "error in query")))
-  (def tableWithWhere (if(contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query)) ) initialTable))
+  (def tableWithWhere (if (contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query))) initialTable))
   (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithWhere) tableWithWhere))
   (def tableWithOrderBy (if (contains? parsedSql :isOrderBy)
-                          (to-string-map(executeOrderByOptional (getOrderByClause splitedLine)
-                                                                (to-keyword-map tableWithDistinct)
-                                                                (mapv #(keyword %) (getOrderByCols splitedLine))))
+                          (to-string-map (executeOrderByOptional (getOrderByClause splitedLine)
+                                                                 (to-keyword-map tableWithDistinct)
+                                                                 (mapv #(keyword %) (getOrderByCols splitedLine))))
                           tableWithDistinct))
-  (if (contains? parsedSql :expressions) (selectColumn (get parsedSql :expressions) tableWithOrderBy) (print-formated-hashmap-in-table tableWithOrderBy))
+  (if (contains? parsedSql :expressions) (print-formated-hashmap-in-table (selectColumn (get parsedSql :expressions) tableWithOrderBy)) (print-formated-hashmap-in-table tableWithOrderBy))
+  (executeSqlQuery)
   )
+
 
