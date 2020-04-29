@@ -60,7 +60,7 @@
       (recur (inc outter))))
   )
 
-(def tab (createTable "map_cal.csv" "csv"))
+(def tab (createTable "mp-assistants.csv" "csv"))
 
 (defn printHeaders [headers]
   (loop [itter 0]
@@ -149,7 +149,7 @@
 ;------------------------------------------------------------Not between execution
 
 
-()
+
 (defn executeNotBetweens [splitedWhereClause file]
   (def valuesForBetween (myBetweenValues (get splitedWhereClause 1)))
   (def colForBetween (get splitedWhereClause 0))
@@ -204,12 +204,6 @@
 (defn parseCol [query]
   (str/split (get query 1) #","
              ))
-(defn getOrderByClause [query]
-  (filterv #(or (= (compare "asc" %) 0) (= (compare "desc" %) 0)) query)
-  )
-(defn getOrderByCols [query]
-  (str/split (nth query (+ (.indexOf query "order") 2)) #",")
-  )
 
 (defn parseSqlQuery [query]
   (cond
@@ -255,7 +249,13 @@
   (mapv #(to-keyword-keys %) table)
   )
 
-
+;---------------------------------------------------------------------------------------ORDER BY
+(defn getOrderByClause [query]
+  (filterv #(or (= (compare "asc" %) 0) (= (compare "desc" %) 0)) query)
+  )
+(defn getOrderByCols [query]
+  (str/split (nth query (+ (.indexOf query "order") 2)) #",")
+  )
 
 (defn myOrderByAsc [table cols]
   (sort-by (apply juxt cols) table)
@@ -274,33 +274,40 @@
 
 
 
-(defn myCount[table col]
+(defn myCount [table col]
   (if (= (compare col "*") 0)
-    (count (filterv #(not= (nth (vals (select-keys % [(getKeys table)])) 0) "0") table))
-    (count (filterv #(not= (nth (vals (select-keys % [col])) 0) "") table))
+    (count (filterv #(not= (nth (vals (select-keys % [(getKeys table)])) 0) 0) table))
+    (count (filterv #(not= (nth (vals (select-keys % [col])) 0) 0) table))
     )
   )
 
 (defn myMedian [table col]
-  (def oneCol (to-string-map(executeOrderByOptional ["asc"] (to-keyword-map(selectColumn [col] table)) (mapv #(keyword %) [col]))))
-  (if (= (rem (count oneCol) 2) 1) (nth (vals(nth oneCol (int (Math/floor (/ (count oneCol) 2))))) 0)
-                                   (first (double (/ (+ (first (vals (nth oneCol (/ (count oneCol) 2)))) (first (vals (nth oneCol (- (/ (count oneCol) 2) 1))))) 2)))  )
+  (def oneCol (to-string-map (executeOrderByOptional ["asc"] (to-keyword-map (selectColumn [col] table)) (mapv #(keyword %) [col]))))
+  (if (= (rem (count oneCol) 2) 1) (nth (vals (nth oneCol (int (Math/floor (/ (count oneCol) 2))))) 0)
+                                   (double
+                                     (/
+                                       (+
+                                         (first
+                                           (vals
+                                             (nth oneCol
+                                                  (/ (count oneCol) 2))))
+                                         (first (vals (nth oneCol (- (/ (count oneCol) 2) 1))))) 2)))
 
   )
 
 
 (defn mySum [table col]
-  (nth (vals(apply merge-with + (selectColumn [col] table))) 0)
+  (nth (vals (apply merge-with + (selectColumn [col] table))) 0)
   )
 
 ;------------------------------------------------------------Execution agregate fucntion
-(defn recursiveAgregateExecusion [table funcs args total]
+(defn executeAgregatesFunc [table funcs args total]
   (if (= (count funcs) 0) total
                           (let [choose (nth funcs 0)]
                             (case choose
-                              "count" (recursiveAgregateExecusion table (subvec funcs 1) (subvec args 1) (conj total (myCount table (nth args 0))))
-                              "sum" (recursiveAgregateExecusion table (subvec funcs 1) (subvec args 1) (conj total (mySum table (nth args 0))))
-                              "med" (recursiveAgregateExecusion table (subvec funcs 1) (subvec args 1) (conj total (myMedian table (nth args 0))))
+                              "count" (executeAgregatesFunc table (subvec funcs 1) (subvec args 1) (conj total (myCount table (nth args 0))))
+                              "sum" (executeAgregatesFunc table (subvec funcs 1) (subvec args 1) (conj total (mySum table (nth args 0))))
+                              "med" (executeAgregatesFunc table (subvec funcs 1) (subvec args 1) (conj total (myMedian table (nth args 0))))
                               )
                             )
                           )
@@ -349,7 +356,7 @@
 
 
 (defn printResult [func res]
-    (apply println func)
+  (apply println func)
   (apply println res)
   )
 
@@ -363,20 +370,18 @@
                       (selectColumn (getKeys tabl) tabl)
                       (print "error in query")))
   (def tableWithWhere (if (contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query))) initialTable))
-  (def tableWithAgregatesFunctions (if (and (contains? parsedSql :expressions) (not= (.indexOf (first(get parsedSql :expressions)) "(") -1))
+
+  (def tableWithAgregatesFunctions (if (and (contains? parsedSql :expressions) (not= (.indexOf (first (get parsedSql :expressions)) "(") -1))
                                      (
                                       (def funcsWithArgs (recursiveParsingAgregateFunctionsIntoMap (get parsedSql :expressions) []))
-                                      (def sdsd (recursiveAgregateExecusion tabl
-                                                                            (unboundKeys funcsWithArgs)
-                                                                            (unboundVals funcsWithArgs)
-                                                                            []
-                                                                            ))
-                                      (def kkk (unboundKeys funcsWithArgs))
-                                      (printResult kkk sdsd)
+                                      (def valuesOfExecution (executeAgregatesFunc tabl (unboundKeys funcsWithArgs) (unboundVals funcsWithArgs) []))
+                                      (def arrayOfFunctions (unboundKeys funcsWithArgs))
+                                      (printResult arrayOfFunctions valuesOfExecution)
                                       (executeSqlQuery))
                                      tableWithWhere
                                      ))
   (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithAgregatesFunctions) tableWithAgregatesFunctions))
+
   (def tableWithOrderBy (if (contains? parsedSql :isOrderBy)
                           (to-string-map (executeOrderByOptional (getOrderByClause splitedLine)
                                                                  (to-keyword-map tableWithDistinct)
