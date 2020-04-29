@@ -50,11 +50,11 @@
 
 
 (defn printData [table]
-  (loop [outter 0]                                          ;;Внешний цикл по записям от 0 ... n;
-    (when (< outter (count table))                          ;; Проверяет количество пройденых записей по hashmap
-      (loop [inner 0]                                       ;;Внутренний цикл по каждой колонке n записи
-        (when (< inner (count (nth table outter)))          ;;Проверка на число колонок которое уже пройдено
-          (print (format "%30s  ||  " (nth (vals (nth table outter)) inner))) ;;Вывод на экран
+  (loop [outter 0]
+    (when (< outter (count table))
+      (loop [inner 0]
+        (when (< inner (count (nth table outter)))
+          (print (format "%30s  ||  " (nth (vals (nth table outter)) inner)))
           (recur (inc inner))))
       (println "")
       (recur (inc outter))))
@@ -64,8 +64,8 @@
 
 (defn printHeaders [headers]
   (loop [itter 0]
-    (when (< itter (count headers))                         ;;Проверка на количество пройденых столбиков
-      (print (format "%30s  ||  " (name (nth (keys headers) itter)))) ;; Вывод название колонок в формате :row  :col :pos_x :pos_y :title :id_mp :id_fr
+    (when (< itter (count headers))
+      (print (format "%30s  ||  " (name (nth (keys headers) itter))))
       (recur (inc itter))))
   (println)
   )
@@ -285,7 +285,7 @@
   (def oneCol (to-string-map(executeOrderByOptional ["asc"] (to-keyword-map(selectColumn [col] table)) (mapv #(keyword %) [col]))))
   (if (= (rem (count oneCol) 2) 1) (nth (vals(nth oneCol (int (Math/floor (/ (count oneCol) 2))))) 0)
                                    (first (double (/ (+ (first (vals (nth oneCol (/ (count oneCol) 2)))) (first (vals (nth oneCol (- (/ (count oneCol) 2) 1))))) 2)))  )
-  
+
   )
 
 
@@ -310,10 +310,48 @@
 
 
 
+;Return entry of - agregateFucn and col => {"count" "*"}
 ;---------------------------------------------------------Agregate Functions Parsing
 
+(defn parseOneAgragateIntoEntry [expr]
+  (def indexBetweenFucnAndBound (.indexOf expr "("))
+  (def col (subs expr (+ indexBetweenFucnAndBound 1) (.indexOf expr ")")))
+  (def func (subs expr 0 indexBetweenFucnAndBound))
+  {func col}
+  )
 
 
+;Return the vector of maps withs parsed expresion [{"count" "row}{"sum" "row"}]
+(defn recursiveParsingAgregateFunctionsIntoMap [expr total]
+  (if (empty? expr) total
+                    (recursiveParsingAgregateFunctionsIntoMap (subvec expr 1) (conj total (parseOneAgragateIntoEntry (first expr))))
+                    )
+  )
+
+
+;-----------------------------------------------------------------------Get Keys from mapEntry and Unbound from brackets elements in vector[{ "count" "*"  "sum" "row"}] => [count sum]
+
+(defn unboundKeys [arr]
+  (into [] (map (fn [arg]
+                  (first (keys arg))
+                  ) arr
+                ))
+  )
+
+;;Also as for vals
+
+(defn unboundVals [arr]
+  (into [] (map (fn [arg]
+                  (first (vals arg))
+                  ) arr
+                ))
+  )
+
+
+(defn printResult [func res]
+    (apply println func)
+  (apply println res)
+  )
 
 
 (defn executeSqlQuery []
@@ -325,7 +363,20 @@
                       (selectColumn (getKeys tabl) tabl)
                       (print "error in query")))
   (def tableWithWhere (if (contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query))) initialTable))
-  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithWhere) tableWithWhere))
+  (def tableWithAgregatesFunctions (if (and (contains? parsedSql :expressions) (not= (.indexOf (first(get parsedSql :expressions)) "(") -1))
+                                     (
+                                      (def funcsWithArgs (recursiveParsingAgregateFunctionsIntoMap (get parsedSql :expressions) []))
+                                      (def sdsd (recursiveAgregateExecusion tabl
+                                                                            (unboundKeys funcsWithArgs)
+                                                                            (unboundVals funcsWithArgs)
+                                                                            []
+                                                                            ))
+                                      (def kkk (unboundKeys funcsWithArgs))
+                                      (printResult kkk sdsd)
+                                      (executeSqlQuery))
+                                     tableWithWhere
+                                     ))
+  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithAgregatesFunctions) tableWithAgregatesFunctions))
   (def tableWithOrderBy (if (contains? parsedSql :isOrderBy)
                           (to-string-map (executeOrderByOptional (getOrderByClause splitedLine)
                                                                  (to-keyword-map tableWithDistinct)
