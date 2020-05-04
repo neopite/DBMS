@@ -22,6 +22,14 @@
   (def headers heads)
   (map #(zipmap headers %) info))
 
+(defn getAllTableAttribute [table]
+  (into [] )
+  )
+
+(defn getFileFormat [parsedSql]
+  (nth (str/split (get parsedSql :tableName) #"\.") 1)
+  )
+
 ;This func check is a str is a number
 ;This func is used for creating table(formatting numbers in string to integer type)
 (defn checkIfStringIsNumber [str]
@@ -234,6 +242,8 @@
   (subvec query (+(.indexOf query "join")1) (+(.indexOf query "join")2))
   )
 
+
+
 (defn parseSqlQuery [query]
   (cond
     (some? (some (partial = "select") query)) (if (some? (some (partial = "distinct") query)) (conj {:isSelect true}
@@ -412,7 +422,13 @@
   (into [] (filterv #(some (partial = (first(vals %))) (map col2 ds2)) out))
   )
 
-
+(defn joinExecuition [table1 table2 col1 col2 joinOption]
+  (case joinOption
+    "inner" (to-string-map(innerJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
+    "outter" (to-string-map(outterJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
+    "right" (to-string-map(rightJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
+    )
+  )
 
 ;--------------------------------------------------------------Joins Parser
 
@@ -420,7 +436,14 @@
   (def query (read-line))
   (def splitedLine (str/split query #" "))
   (def parsedSql (parseSqlQuery splitedLine))
-  (def tabl (createTable (get parsedSql :tableName) (nth (str/split (get parsedSql :tableName) #"\.") 1)))
+  (def tabl (if (contains? parsedSql :isJoin) (joinExecuition (createTable (get parsedSql :tableName) (getFileFormat parsedSql))
+                                                              (createTable (first(get parsedSql :joinedTable)) (getFileFormat parsedSql))
+                                                              (first (get parsedSql :valsJoin))
+                                                              (last(get parsedSql :valsJoin))
+                                                              (first (get parsedSql :joinType))
+                                                              )
+                                              (createTable (get parsedSql :tableName) (nth (str/split (get parsedSql :tableName) #"\.") 1))
+                                              ))
   (def initialTable (if (and (contains? parsedSql :isSelect) (contains? parsedSql :tableName))
                       (selectColumn (getKeys tabl) tabl)
                       (print "error in query")))
