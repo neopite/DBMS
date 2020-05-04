@@ -33,10 +33,18 @@
   (def ke (keys oneRow))
   (zipmap ke (mapv #(cond
                       (checkIfStringIsNumber %) (Integer/parseInt %)
-                      (empty? %) 0
+                      (empty? %) ()
                       :else
                       %
                       ) va))
+  )
+
+(defn checkEmptyOneRow [oneRow]
+  (into {} (filter #(not(empty? (last %))) oneRow))
+  )
+
+(defn formate-delete-empty [table]
+  (into () (map #(checkEmptyOneRow %) table))
   )
 
 
@@ -45,8 +53,12 @@
   )
 
 
+(defn preCreateTable [name format]
+  (doall (apply formate-data-to-hashmap (saveSeq name format)))
+  )
+
 (defn createTable [name format]
-  (formateTable (doall (apply formate-data-to-hashmap (saveSeq name format))))
+  (formateTable(formate-delete-empty(preCreateTable name format)))
   )
 
 
@@ -77,8 +89,9 @@
   )
 
 
-(defn getKeys [file]
-  (keys (first file)))
+(defn getKeys [table]
+  ((comp distinct flatten) (map #((comp keys first) %) [table]))
+  )
 
 
 ;----------------------------------------------------------Distinct
@@ -194,8 +207,7 @@
   (cond
     (= (get col 0) "*") (map #(select-keys % (getKeys file)) file)
     :else
-    (map #(select-keys % col) file)
-
+    (mapv #(select-keys % col) file)
     ))
 
 
@@ -205,6 +217,22 @@
 (defn parseCol [query]
   (str/split (get query 1) #","
              ))
+
+(defn getJoinsClause [query]
+  (filterv #(or (= (compare "outter" %) 0)  (= (compare "right" %) 0)  (= (compare "inner" %) 0)) query)
+  )
+(defn parseJoinsOnExpr [query]
+  (subvec query (+(.indexOf query "on")1) (+(.indexOf query "on")4))
+  )
+
+(defn getColonsForJoins [expr]
+  (def firs (last(str/split (first expr) #"\.")))
+  (def sec (last (str/split (last expr) #"\.")))
+  [firs sec]
+  )
+(defn getJoinedTable [query]
+  (subvec query (+(.indexOf query "join")1) (+(.indexOf query "join")2))
+  )
 
 (defn parseSqlQuery [query]
   (cond
@@ -216,11 +244,16 @@
     (some? (some (partial = "exp") query)) (conj {:expressions (parseCol query)}
                                                       (parseSqlQuery (subvec query 1)))
     (some? (some (partial = "from") query)) (conj {:tableName (get query (getTableIndex query))}
-                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1)) (subvec query (getTableIndex query))))))
+                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1)) (subvec query (+(getTableIndex query)1))))))
     (some? (some (partial = "where") query)) (conj {:isWhere true}
                                                    (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "where")) (subvec query (+ (.indexOf query "where") 1))))))
     (some? (some (partial = "order") query)) (conj {:isOrderBy true}
                                                    (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "order")) (subvec query (+ (.indexOf query "by") 1))))))
+    (some? (some (partial = "join")query)) (conj {:isJoin true :joinType (getJoinsClause query) :joinedTable (getJoinedTable query) :valsJoin (getColonsForJoins(parseJoinsOnExpr query))}
+                                                               (parseSqlQuery (into [] (concat (subvec query 0 (+ (getTableIndex query)1))
+                                                                                               (subvec query (+ (getTableIndex query)3))
+                                                                                               )))
+                                                               )
 
     :else {}))
 
@@ -357,10 +390,11 @@
   (apply println res)
   )
 
+;--------------------------------------------------------------Joins
+
 (defn getHeaders [ds1 ds2]
   ((comp distinct flatten) (map #((comp keys first) %) [ds1 ds2]))
   )
-
 
 (defn innerJoin [ds1 ds2 col1 col2]
       (into [] (clojure.set/join ds1 ds2 {col1 col2}))
@@ -378,6 +412,9 @@
   (into [] (filterv #(some (partial = (first(vals %))) (map col2 ds2)) out))
   )
 
+
+
+;--------------------------------------------------------------Joins Parser
 
 (defn executeSqlQuery []
   (def query (read-line))
