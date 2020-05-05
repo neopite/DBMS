@@ -22,9 +22,6 @@
   (def headers heads)
   (map #(zipmap headers %) info))
 
-(defn getAllTableAttribute [table]
-  (into [] )
-  )
 
 (defn getFileFormat [parsedSql]
   (nth (str/split (get parsedSql :tableName) #"\.") 1)
@@ -102,9 +99,19 @@
   )
 
 
+(defn getOneRowAllAttributes [row headers]
+  (concat (filterv #(not (contains? headers %)) headers) )
+  )
+
+
+(defn getAllTableAttribute [table]
+  (into [] (distinct(flatten(merge (mapv #(keys %) table)
+                                   ))))
+  )
+
 ;----------------------------------------------------------Distinct
 (defn myDistinct [table]
-  (into [] (distinct table)))
+  (into [] (doall(distinct table))))
 
 
 ;@param - where query without where(not splitted)
@@ -213,7 +220,7 @@
 ;------------------------------------------------------------Select Columns
 (defn selectColumn [col file]
   (cond
-    (= (get col 0) "*") (map #(select-keys % (getKeys file)) file)
+    (= (get col 0) "*") (mapv #(select-keys % (getAllTableAttribute file)) file)
     :else
     (mapv #(select-keys % col) file)
     ))
@@ -445,7 +452,7 @@
                                               (createTable (get parsedSql :tableName) (nth (str/split (get parsedSql :tableName) #"\.") 1))
                                               ))
   (def initialTable (if (and (contains? parsedSql :isSelect) (contains? parsedSql :tableName))
-                      (selectColumn (getKeys tabl) tabl)
+                      (selectColumn (getAllTableAttribute tabl) tabl)
                       (print "error in query")))
   (def tableWithWhere (if (contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query))) initialTable))
 
@@ -465,9 +472,9 @@
   (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithSelect) tableWithSelect))
 
   (def tableWithOrderBy (if (contains? parsedSql :isOrderBy)
-                          (p (getKeys tableWithDistinct) (to-string-map (executeOrderByOptional (getOrderByClause splitedLine)
+                          (p (getAllTableAttribute tableWithDistinct) (to-string-map (executeOrderByOptional (getOrderByClause splitedLine)
                                                                                                  (to-keyword-map tableWithDistinct)
                                                                                                  (mapv #(keyword %) (getOrderByCols splitedLine)))))
-                          (p tableWithDistinct)))
+                          (p (getAllTableAttribute tableWithDistinct) tableWithDistinct)))
   (executeSqlQuery)
   )
