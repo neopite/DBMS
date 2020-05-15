@@ -45,7 +45,7 @@
   )
 
 (defn checkEmptyOneRow [oneRow]
-  (into {} (filter #(not(empty? (last %))) oneRow))
+  (into {} (filter #(not (empty? (last %))) oneRow))
   )
 
 (defn formate-delete-empty [table]
@@ -63,7 +63,7 @@
   )
 
 (defn createTable [name format]
-  (formateTable(formate-delete-empty(preCreateTable name format)))
+  (formateTable (formate-delete-empty (preCreateTable name format)))
   )
 
 
@@ -100,18 +100,18 @@
 
 
 (defn getOneRowAllAttributes [row headers]
-  (concat (filterv #(not (contains? headers %)) headers) )
+  (concat (filterv #(not (contains? headers %)) headers))
   )
 
 
 (defn getAllTableAttribute [table]
-  (into [] (distinct(flatten(merge (mapv #(keys %) table)
-                                   ))))
+  (into [] (distinct (flatten (merge (mapv #(keys %) table)
+                                     ))))
   )
 
 ;----------------------------------------------------------Distinct
 (defn myDistinct [table]
-  (into [] (doall(distinct table))))
+  (into [] (doall (distinct table))))
 
 
 ;@param - where query without where(not splitted)
@@ -132,6 +132,12 @@
   )
 
 
+(defn findHavingExpression [query]
+  (def firstInd (+ (.indexOf query "having") 7))
+  (def lastInd (+ (.lastIndexOf query ")") 1))
+  (subs query firstInd lastInd)
+  )
+
 
 (defn findWhereExpression [query]
   (def firstInd (+ (.indexOf query "where") +6))
@@ -141,6 +147,7 @@
 (defn splitWhereClause [whereClause]
   (str/split whereClause #" ")
   )
+
 
 (defn myBetweenValues [betweenExpr]
   (def firs (+ (int (.indexOf betweenExpr "(")) 1))
@@ -159,6 +166,16 @@
   (def colForBetween (get splitedWhereClause 0))
   (betweens valuesForBetween file colForBetween)
   )
+
+(defn executeBetweensForHaving [splitedWhereClause file]
+  (def valuesForBetween (myBetweenValues (get splitedWhereClause 1)))
+  (def word (first splitedWhereClause))
+  (def colForBetween (str (subs word 0 (.indexOf word "(")) (subs word (+ (.indexOf word "(") 1) (.indexOf word ")")))
+    )
+  (betweens valuesForBetween file colForBetween)
+  )
+
+
 ;----------------------------------------------------------------not between(value,value);
 (defn notBetweens [valuess file col]
   (filterv (fn [line] (or (> (get (select-keys line [col]) col) (Integer/parseInt (nth valuess 1)))
@@ -187,11 +204,22 @@
 
 
 (defn createArrayOfDfInWhere [query file]
-  (def splitedArrayByLogicalValues (findAllConditionInWhere (findWhereExpression query)))
+  (def splitedArrayByLogicalValues (doall (findAllConditionInWhere (findWhereExpression query))))
   (doall (mapv #(cond
                   (.contains (str/split % #" ") "not") (executeNotBetweens (str/split (str/trim (str/replace % #"not" "")) #" ") file)
                   :else
                   (executeBetweens (str/split % #" ") file)
+
+                  ) splitedArrayByLogicalValues))
+  )
+
+
+(defn createArrayOfDfInHaving [query file]
+  (def splitedArrayByLogicalValues (findAllConditionInWhere (findHavingExpression query)))
+  (doall (mapv #(cond
+                  (.contains (str/split % #" ") "not") (executeNotBetweens (str/split (str/trim (str/replace % #"not" "")) #" ") file)
+                  :else
+                  (executeBetweensForHaving (str/split % #" ") file)
 
                   ) splitedArrayByLogicalValues))
   )
@@ -216,6 +244,26 @@
   )
 
 
+(defn recursiveConcatHaving [finAr arrayOfDf arrayOfCond]
+  (if (and (= (count finAr) 0) (= (count arrayOfDf) 1) (empty? arrayOfCond)) (nth arrayOfDf 0) (cond
+                                                                                                 (= (empty? arrayOfCond) true) (vec finAr)
+                                                                                                 (= (empty? finAr) true) (let [kek (nth arrayOfCond 0)]
+                                                                                                                           (case kek
+                                                                                                                             "and" (recursiveConcatHaving (mergeAndConditionTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+                                                                                                                             "or" (recursiveConcatHaving (mergeOrConditiontTwoDf (nth arrayOfDf 0) (nth arrayOfDf 1)) (subvec arrayOfDf 2) (subvec arrayOfCond 1))
+                                                                                                                             )
+                                                                                                                           )
+                                                                                                 :else (let [choose (first arrayOfCond)]
+                                                                                                         (case choose
+                                                                                                           "and" (recursiveConcatHaving (mergeAndConditionTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+                                                                                                           "or" (recursiveConcatHaving (mergeOrConditiontTwoDf finAr (first arrayOfDf)) (subvec arrayOfDf 1) (subvec arrayOfCond 1))
+                                                                                                           )
+                                                                                                         )
+                                                                                                 ))
+  )
+
+
+
 
 ;------------------------------------------------------------Select Columns
 (defn selectColumn [col file]
@@ -234,43 +282,66 @@
              ))
 
 (defn getJoinsClause [query]
-  (filterv #(or (= (compare "outter" %) 0)  (= (compare "right" %) 0)  (= (compare "inner" %) 0)) query)
+  (filterv #(or (= (compare "outter" %) 0) (= (compare "right" %) 0) (= (compare "inner" %) 0)) query)
   )
 (defn parseJoinsOnExpr [query]
-  (subvec query (+(.indexOf query "on")1) (+(.indexOf query "on")4))
+  (subvec query (+ (.indexOf query "on") 1) (+ (.indexOf query "on") 4))
   )
 
 (defn getColonsForJoins [expr]
-  (def firs (last(str/split (first expr) #"\.")))
+  (def firs (last (str/split (first expr) #"\.")))
   (def sec (last (str/split (last expr) #"\.")))
   [firs sec]
   )
 (defn getJoinedTable [query]
-  (subvec query (+(.indexOf query "join")1) (+(.indexOf query "join")2))
+  (subvec query (+ (.indexOf query "join") 1) (+ (.indexOf query "join") 2))
   )
+
+
+;---------------------------------------------------------------Parse GroupBy params
+
+(defn findArgs [query]
+  (str/split (nth query (+ (.indexOf query "group") 2)) #",")
+  )
+
+;--------------------------------------------------Find Having
+(defn findHaving [query]
+  (.indexOf query "having")
+  )
+
+
+
 
 
 
 (defn parseSqlQuery [query]
   (cond
     (some? (some (partial = "select") query)) (if (some? (some (partial = "distinct") query)) (conj {:isSelect true}
-                                                      (parseSqlQuery (into [] (subvec query 1)))) (conj {:isSelect true}
-                                                      (parseSqlQuery (into [] (concat ["exp"] (subvec query 1))))))
+                                                                                                    (parseSqlQuery (into [] (subvec query 1)))) (conj {:isSelect true}
+                                                                                                                                                      (parseSqlQuery (into [] (concat ["exp"] (subvec query 1))))))
     (some? (some (partial = "distinct") query)) (conj {:isDistinct true}
                                                       (parseSqlQuery (into [] (concat ["exp"] (subvec query 1)))))
     (some? (some (partial = "exp") query)) (conj {:expressions (parseCol query)}
-                                                      (parseSqlQuery (subvec query 1)))
+                                                 (parseSqlQuery (subvec query 1)))
+    (some? (some (partial = "group") query)) (conj {:groupBy true :groupByParams (findArgs query)}
+                                                   (parseSqlQuery
+                                                     (into [] (concat (subvec query 0 (.indexOf query "group"))
+                                                                      (subvec query (+ (.indexOf query "group") 2))))))
+    (some? (some (partial = "having") query)) (conj {:isHaving true}
+                                                    (parseSqlQuery
+                                                      (into [] (concat (subvec query 0 (.indexOf query "having"))
+                                                                       (subvec query (+ (.indexOf query "having") 1))
+                                                                       ))))
     (some? (some (partial = "from") query)) (conj {:tableName (get query (getTableIndex query))}
-                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1)) (subvec query (+(getTableIndex query)1))))))
+                                                  (parseSqlQuery (into [] (concat (subvec query 0 (- (getTableIndex query) 1)) (subvec query (+ (getTableIndex query) 1))))))
     (some? (some (partial = "where") query)) (conj {:isWhere true}
                                                    (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "where")) (subvec query (+ (.indexOf query "where") 1))))))
     (some? (some (partial = "order") query)) (conj {:isOrderBy true}
                                                    (parseSqlQuery (into [] (concat (subvec query 0 (.indexOf query "order")) (subvec query (+ (.indexOf query "by") 1))))))
-    (some? (some (partial = "join")query)) (conj {:isJoin true :joinType (getJoinsClause query) :joinedTable (getJoinedTable query) :valsJoin (getColonsForJoins(parseJoinsOnExpr query))}
-                                                               (parseSqlQuery (into [] (concat (subvec query 0 (+ (getTableIndex query)1))
-                                                                                               (subvec query (+ (getTableIndex query)3))
-                                                                                               )))
-                                                               )
+    (some? (some (partial = "join") query)) (conj {:isJoin true :joinType (getJoinsClause query) :joinedTable (getJoinedTable query) :valsJoin (getColonsForJoins (parseJoinsOnExpr query))}
+                                                  (parseSqlQuery (into [] (concat (subvec query 0 (+ (getTableIndex query) 1))
+                                                                                  (subvec query (+ (getTableIndex query) 3))
+                                                                                  ))))
 
     :else {}))
 
@@ -322,7 +393,7 @@
 (defn myCount [table col]
   (if (= (compare col "*") 0)
     (count table)
-    (count (filterv #(= (count(vals (select-keys % [col]))) 1 ) table))
+    (count (filterv #(= (count (vals (select-keys % [col]))) 1) table))
     ))
 
 ;-----------------------------------------------------------Agregate fucntions
@@ -409,13 +480,9 @@
 
 ;--------------------------------------------------------------Joins
 
-(defn getHeaders [ds1 ds2]
-  ((comp distinct flatten) (map #((comp keys first) %) [ds1 ds2]))
-  )
-
 (defn innerJoin [ds1 ds2 col1 col2]
-      (into [] (clojure.set/join ds1 ds2 {col1 col2}))
-      )
+  (into [] (clojure.set/join ds1 ds2 {col1 col2}))
+  )
 
 (defn outterJoin [ds1 ds2 col1 col2]
   (let [z1 (zipmap (mapv col1 ds1) ds1)
@@ -426,55 +493,113 @@
 
 (defn rightJoin [ds1 ds2 col1 col2]
   (def out (outterJoin ds1 ds2 col1 col2))
-  (into [] (filterv #(some (partial = (first(vals %))) (map col2 ds2)) out))
+  (into [] (filterv #(some (partial = (first (vals %))) (map col2 ds2)) out))
   )
 
 (defn joinExecuition [table1 table2 col1 col2 joinOption]
   (case joinOption
-    "inner" (to-string-map(innerJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
-    "outter" (to-string-map(outterJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
-    "right" (to-string-map(rightJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
+    "inner" (to-string-map (innerJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
+    "outter" (to-string-map (outterJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
+    "right" (to-string-map (rightJoin (to-keyword-map table1) (to-keyword-map table2) (keyword col1) (keyword col2)))
     )
   )
 
-;--------------------------------------------------------------Joins Parser
+
+
+
+;---------------sum(money) -> [sum , money]
+
+(defn findParams [word]
+  (def option (subs word 0 (.indexOf word "(")))
+  (def va (keyword (subs word (+ (.indexOf word "(") 1) (.indexOf word ")"))))
+  [option va]
+  )
+
+
+
+;-----------------------------------------------------------Find all agregate func in select without columns.
+;------------------Args - array of query
+(defn findAgregate [query]
+  (filterv #(not= (.indexOf % "(") -1) query)
+  )
+
+;----------------Finds All columns in select query
+;------------------Args - array of query
+(defn findColumnsInQuery [query]
+  (filterv #(= (.indexOf % "(") -1) query)
+  )
+
+;--------------------------------------------------------------GroupBy
+
+
+(defn myGroupByEx [table groupedCols valss ar]
+  (if (empty? valss) ar
+                     (let [elems (findParams (first valss))
+                           ]
+                       (def tabl (group-by #(select-keys % groupedCols) (doall table)))
+                       (def tab (mapv (fn [[grp-map values]] (let [option (first elems)
+                                                                   valFor (last elems)
+                                                                   ]
+                                                               (case option
+                                                                 "sum" (assoc grp-map (keyword (str "sum" (subs (str valFor) 1))) (reduce + (map valFor values)))
+                                                                 "count" (assoc grp-map (keyword (str "count" (subs (str valFor) 1))) (count (map valFor values)))
+                                                                 )
+                                                               )
+                                        ) tabl))
+                       (if (empty? ar) (myGroupByEx table groupedCols (subvec valss 1) tab)
+                                       (myGroupByEx table groupedCols (subvec valss 1) (mapv #(conj %1 %2) ar tab)))
+                       )
+                     )
+  )
+
+(defn selectColumsInGroupBy [table columns groupByArgs]
+  (if (empty? groupByArgs) table (if (some (partial = (first groupByArgs)) columns)
+                                   (selectColumsInGroupBy table columns (subvec groupByArgs 1))
+                                   (selectColumsInGroupBy (mapv #(dissoc % (first groupByArgs)) table) columns (subvec groupByArgs 1))
+                                   ))
+  )
+
 
 (defn executeSqlQuery []
   (def query (read-line))
   (def splitedLine (str/split query #" "))
   (def parsedSql (parseSqlQuery splitedLine))
-  (def tabl (if (contains? parsedSql :isJoin) (joinExecuition (createTable (get parsedSql :tableName) (getFileFormat parsedSql))
-                                                              (createTable (first(get parsedSql :joinedTable)) (getFileFormat parsedSql))
-                                                              (first (get parsedSql :valsJoin))
-                                                              (last(get parsedSql :valsJoin))
-                                                              (first (get parsedSql :joinType))
-                                                              )
-                                              (createTable (get parsedSql :tableName) (nth (str/split (get parsedSql :tableName) #"\.") 1))
-                                              ))
+  (def tabl (if (contains? parsedSql :isJoin)
+              ;True
+              (joinExecuition (createTable (get parsedSql :tableName) (getFileFormat parsedSql))
+                              (createTable (first (get parsedSql :joinedTable)) (getFileFormat parsedSql))
+                              (first (get parsedSql :valsJoin))
+                              (last (get parsedSql :valsJoin))
+                              (first (get parsedSql :joinType))
+                              )
+              ;False
+              (createTable (get parsedSql :tableName) (nth (str/split (get parsedSql :tableName) #"\.") 1))
+              ))
   (def initialTable (if (and (contains? parsedSql :isSelect) (contains? parsedSql :tableName))
                       (selectColumn (getAllTableAttribute tabl) tabl)
                       (print "error in query")))
   (def tableWithWhere (if (contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query))) initialTable))
+  (def tableWithGroupBy (if (contains? parsedSql :groupBy)
+                          (to-string-map(selectColumsInGroupBy(myGroupByEx (to-keyword-map tableWithWhere) (mapv #(keyword %) (get parsedSql :groupByParams)) (findAgregate (get parsedSql :expressions)) []) (mapv #(keyword %) (findColumnsInQuery(get parsedSql :expressions)))(mapv #(keyword %) (get parsedSql :groupByParams))))
+                          (if (and (contains? parsedSql :expressions) (not= (.indexOf (first (get parsedSql :expressions)) "(") -1))
+                            ((def funcsWithArgs (recursiveParsingAgregateFunctionsIntoMap (get parsedSql :expressions) []))
+                             (def valuesOfExecution (executeAgregatesFunc tabl (unboundKeys funcsWithArgs) (unboundVals funcsWithArgs) []))
+                             (def arrayOfFunctions (unboundKeys funcsWithArgs))
+                             (printAgregationsFuncResult arrayOfFunctions valuesOfExecution)
+                             (executeSqlQuery))
+                            (selectColumn (get parsedSql :expressions) tableWithWhere))
+                          ))
+  (def tableWithHaving (if (and(contains? parsedSql :isHaving) (contains? parsedSql :groupBy))
+                         (recursiveConcatHaving [] (createArrayOfDfInHaving query tableWithGroupBy) (findAllClausesInWhere (findHavingExpression query)))
+                         tableWithGroupBy
+                         ))
 
-  (def tableWithAgregatesFunctions (if (and (contains? parsedSql :expressions) (not= (.indexOf (first (get parsedSql :expressions)) "(") -1))
-                                     ;true------------------------
-                                     ((def funcsWithArgs (recursiveParsingAgregateFunctionsIntoMap (get parsedSql :expressions) []))
-                                      (def valuesOfExecution (executeAgregatesFunc tabl (unboundKeys funcsWithArgs) (unboundVals funcsWithArgs) []))
-                                      (def arrayOfFunctions (unboundKeys funcsWithArgs))
-                                      (printAgregationsFuncResult arrayOfFunctions valuesOfExecution)
-                                      (executeSqlQuery))
-                                     ;false---------------------
-
-                                     tableWithWhere
-                                     ))
-  (def tableWithSelect(if (contains? parsedSql :expressions) (selectColumn (get parsedSql :expressions) tableWithAgregatesFunctions) ( tableWithAgregatesFunctions))
-    )
-  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithSelect) tableWithSelect))
+  (def tableWithDistinct (if (contains? parsedSql :isDistinct) (myDistinct tableWithHaving) tableWithHaving))
 
   (def tableWithOrderBy (if (contains? parsedSql :isOrderBy)
                           (p (getAllTableAttribute tableWithDistinct) (to-string-map (executeOrderByOptional (getOrderByClause splitedLine)
-                                                                                                 (to-keyword-map tableWithDistinct)
-                                                                                                 (mapv #(keyword %) (getOrderByCols splitedLine)))))
+                                                                                                             (to-keyword-map tableWithDistinct)
+                                                                                                             (mapv #(keyword %) (getOrderByCols splitedLine)))))
                           (p (getAllTableAttribute tableWithDistinct) tableWithDistinct)))
   (executeSqlQuery)
   )
