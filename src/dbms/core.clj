@@ -278,7 +278,7 @@
   (+ (.indexOf query "from") 1))
 
 (defn parseCol [query]
-  (str/split (get query 1) #","
+  (str/split query #","
              ))
 
 (defn getJoinsClause [query]
@@ -310,7 +310,23 @@
   )
 
 
+;----------------------------------------select x,y, case ..... from table .Func make select expr in one elem
 
+(defn recurConcatCasesInExpr [query ar]
+  (if (empty? query)
+    ar
+    (if (some (partial = "case") [(first query)])
+      (recurConcatCasesInExpr (subvec query (+(.indexOf query "end")3)) (conj ar(str/join " " (subvec query (.indexOf query "case") (+(.indexOf query "end")3)))))
+      (recurConcatCasesInExpr (subvec query 1) (conj ar(first query)))
+      ))
+  )
+
+(defn concatCaseExprAndCols [query]
+  (if (some (partial = "distinct") query)
+    (str/join #"" (subvec query (+(.indexOf query "distinct")1)(.indexOf query "from")) )
+    (str/join #"" (subvec query (+(.indexOf query "select")1)(.indexOf query "from")) ))
+
+  )
 
 
 
@@ -321,7 +337,7 @@
                                                                                                                                                       (parseSqlQuery (into [] (concat ["exp"] (subvec query 1))))))
     (some? (some (partial = "distinct") query)) (conj {:isDistinct true}
                                                       (parseSqlQuery (into [] (concat ["exp"] (subvec query 1)))))
-    (some? (some (partial = "exp") query)) (conj {:expressions (parseCol query)}
+    (some? (some (partial = "exp") query)) (conj {:expressions (parseCol (concatCaseExprAndCols (recurConcatCasesInExpr (subvec query 1) []))) :isCase (some (partial = "case")query)}
                                                  (parseSqlQuery (subvec query 1)))
     (some? (some (partial = "group") query)) (conj {:groupBy true :groupByParams (findArgs query)}
                                                    (parseSqlQuery
@@ -533,6 +549,8 @@
 
 
 (defn myGroupByEx [table groupedCols valss ar]
+ (if (and (empty? ar) (empty? valss))
+   (doall(distinct(mapv #(select-keys % groupedCols) table)))
   (if (empty? valss) ar
                      (let [elems (findParams (first valss))
                            ]
@@ -540,7 +558,7 @@
                        (def tab (mapv (fn [[grp-map values]] (let [option (first elems)
                                                                    valFor (last elems)
                                                                    ]
-                                                               (case option
+                                                                (case option
                                                                  "sum" (assoc grp-map (keyword (str "sum" (subs (str valFor) 1))) (reduce + (map valFor values)))
                                                                  "count" (assoc grp-map (keyword (str "count" (subs (str valFor) 1))) (count (map valFor values)))
                                                                  )
@@ -549,7 +567,7 @@
                        (if (empty? ar) (myGroupByEx table groupedCols (subvec valss 1) tab)
                                        (myGroupByEx table groupedCols (subvec valss 1) (mapv #(conj %1 %2) ar tab)))
                        )
-                     )
+                     ))
   )
 
 (defn selectColumsInGroupBy [table columns groupByArgs]
@@ -560,10 +578,101 @@
   )
 
 
+
+
+;---------------------------------------------------Case Expression
+
+;-----------------------------------------------Recur parse all elements ["when kek>4 then nice"] -> ["kek" ">" "4" "nice"]
+
+(defn parseCaseExprIntoMap [caseExpr]
+  (def splittedExpr (str/split caseExpr #" "))
+  (if (= (compare "else" (first splittedExpr)) 0)
+    ["else" (last splittedExpr)]
+    (cond
+      (= (compare (re-find (re-matcher #"=|>" (nth splittedExpr 1))) "=") 0) [(first (str/split (nth splittedExpr 1) #"=|>")) "=" (last (str/split (nth splittedExpr 1) #"=|>")) (last splittedExpr)]
+      (= (compare (re-find (re-matcher #"=|>" (nth splittedExpr 1))) ">") 0) [(first (str/split (nth splittedExpr 1) #"=|>")) ">" (last (str/split (nth splittedExpr 1) #"=|>")) (last splittedExpr)]
+      )
+    )
+  )
+
+;-----------------------------------------------Recur parse all elements in arr [["when kek>4 then nice"]...] -> ["kek" ">" "4" "nice"]
+
+(defn recursiveParseAllClausesInCase [caseQuery ar]
+  (if (empty? caseQuery)
+    ar
+    (recursiveParseAllClausesInCase (subvec caseQuery 1) (conj ar (parseCaseExprIntoMap (first caseQuery))))
+    )
+  )
+
+(defn filterThroughCase [initTable cases colName]
+
+  (mapv (fn [line]
+          (cond
+            (and (= (compare (nth cases 1) "=") 0) (= (first (vals (select-keys line [(first cases)]))) (Integer/parseInt (nth cases 2)))) (conj line {colName (last cases)})
+            (and (= (compare (nth cases 1) ">") 0) (> (first (vals (select-keys line [(first cases)]))) (Integer/parseInt (nth cases 2)))) (conj line {colName (last cases)})
+            (and(= (compare (first cases) "else") 0) (not(contains? line colName))) (conj line {colName (last cases)})
+            :else
+            line
+            )
+
+          ) initTable)
+  )
+
+(defn recursiveCaseExecution [initTable cases colName]
+  (if (empty? cases) initTable
+                     (recursiveCaseExecution (filterThroughCase initTable (first cases) colName) (subvec cases 1) colName)
+                     )
+  )
+
+(defn parseCaseClaueseIntoArrayOfStrings [query]
+  (def arrayOfConditions (str/split(str (subs query 5 (.indexOf query "end"))) #","))
+  arrayOfConditions
+  )
+
+(defn putCommanInCase [query]
+  (def splitted (str/split query #" "))
+  (def lf (str/replace query #" when" ",when"))
+  (str/replace (str/replace lf #"case,when" "case when") #" else" ",else")
+  )
+
+(defn getColName [query]
+  (def arrayOfConditions (str/split query #" "))
+  (last arrayOfConditions)
+  )
+
+(defn findAllCasesInSelectExpr [selExpr]
+  (filterv #(= (compare (first(str/split % #" ")) "case") 0) selExpr)
+  )
+
+(defn isCase [expr]
+  (if(= (compare (first(str/split expr #" ")) "case") 0) true false)
+  )
+
+
+
+(defn recursiveACoupleCaseExecution [initTable casesExpr]
+  (if (empty? casesExpr)
+    initTable
+    (recursiveACoupleCaseExecution (recursiveCaseExecution initTable
+                                                           (recursiveParseAllClausesInCase
+                                                             (parseCaseClaueseIntoArrayOfStrings
+                                                             (putCommanInCase(first casesExpr))) [])
+                                                           (last (str/split(first casesExpr) #" "))) (subvec casesExpr 1))
+    )
+  )
+
+(defn replaceCasesByCols [expres]
+  (mapv #(if (isCase %)
+           (getColName %)
+           %
+           ) expres)
+  )
+
 (defn executeSqlQuery []
   (def query (read-line))
   (def splitedLine (str/split query #" "))
   (def parsedSql (parseSqlQuery splitedLine))
+  (def cools (get parsedSql :expressions))
   (def tabl (if (contains? parsedSql :isJoin)
               ;True
               (joinExecuition (createTable (get parsedSql :tableName) (getFileFormat parsedSql))
@@ -579,17 +688,25 @@
                       (selectColumn (getAllTableAttribute tabl) tabl)
                       (print "error in query")))
   (def tableWithWhere (if (contains? parsedSql :isWhere) (recursiveConcat [] (createArrayOfDfInWhere query tabl) (findAllClausesInWhere (findWhereExpression query))) initialTable))
+
+  ;here case . То есть мы с експрешена удаляем кейс земеняем названием новой колонки и в таблицу суём значения с кейса ну и всё походу =) я очень сильно устал
+  (def tableWithCase (if (contains? parsedSql :isCase)
+                       (recursiveACoupleCaseExecution tableWithWhere (findAllCasesInSelectExpr cools))
+
+                       tableWithWhere
+                       ))
+  (def cools (replaceCasesByCols cools))
   (def tableWithGroupBy (if (contains? parsedSql :groupBy)
-                          (to-string-map(selectColumsInGroupBy(myGroupByEx (to-keyword-map tableWithWhere) (mapv #(keyword %) (get parsedSql :groupByParams)) (findAgregate (get parsedSql :expressions)) []) (mapv #(keyword %) (findColumnsInQuery(get parsedSql :expressions)))(mapv #(keyword %) (get parsedSql :groupByParams))))
-                          (if (and (contains? parsedSql :expressions) (not= (.indexOf (first (get parsedSql :expressions)) "(") -1))
-                            ((def funcsWithArgs (recursiveParsingAgregateFunctionsIntoMap (get parsedSql :expressions) []))
+                          (to-string-map (selectColumsInGroupBy (myGroupByEx (to-keyword-map tableWithCase) (mapv #(keyword %) (get parsedSql :groupByParams)) (findAgregate cools) []) (mapv #(keyword %) (findColumnsInQuery cools)) (mapv #(keyword %) (get parsedSql :groupByParams))))
+                          (if (and (contains? parsedSql :expressions) (not= (.indexOf (first cools) "(") -1))
+                            ((def funcsWithArgs (recursiveParsingAgregateFunctionsIntoMap cools []))
                              (def valuesOfExecution (executeAgregatesFunc tabl (unboundKeys funcsWithArgs) (unboundVals funcsWithArgs) []))
                              (def arrayOfFunctions (unboundKeys funcsWithArgs))
                              (printAgregationsFuncResult arrayOfFunctions valuesOfExecution)
                              (executeSqlQuery))
-                            (selectColumn (get parsedSql :expressions) tableWithWhere))
+                            (selectColumn cools tableWithCase))
                           ))
-  (def tableWithHaving (if (and(contains? parsedSql :isHaving) (contains? parsedSql :groupBy))
+  (def tableWithHaving (if (and (contains? parsedSql :isHaving) (contains? parsedSql :groupBy))
                          (recursiveConcatHaving [] (createArrayOfDfInHaving query tableWithGroupBy) (findAllClausesInWhere (findHavingExpression query)))
                          tableWithGroupBy
                          ))
